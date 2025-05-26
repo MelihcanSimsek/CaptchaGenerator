@@ -1,3 +1,7 @@
+using CaptchaGenerator.Model.Security;
+using CaptchaGenerator.Models.Security;
+using CaptchaGenerator.Security.Hash;
+using CaptchaGenerator.Security.Token;
 using CaptchaGenerator.Services;
 using Scalar.AspNetCore;
 
@@ -8,8 +12,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-builder.Services.AddSingleton<Random>();
-builder.Services.AddSingleton<CaptchaService>();
+builder.Services.AddScoped<Random>();
+builder.Services.AddScoped<ICaptchaService, CaptchaService>();
+builder.Services.AddScoped<ITokenHelper, TokenHelper>();
+builder.Services.AddScoped<IHashHelper, HashHelper>();
+
+builder.Services.Configure<TokenOptions>(builder.Configuration.GetSection("TokenOptions"));
+builder.Services.Configure<HashOptions>(builder.Configuration.GetSection("HashOptions"));
 
 builder.Services.AddCors(options =>
 {

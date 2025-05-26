@@ -1,4 +1,5 @@
-﻿using CaptchaGenerator.Services;
+﻿using CaptchaGenerator.Models.DTOs.Requests;
+using CaptchaGenerator.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,9 +9,9 @@ namespace CaptchaGenerator.Controllers
     [ApiController]
     public class CaptchaController : ControllerBase
     {
-        private readonly CaptchaService captchaService;
+        private readonly ICaptchaService captchaService;
 
-        public CaptchaController(CaptchaService captchaService)
+        public CaptchaController(ICaptchaService captchaService)
         {
             this.captchaService = captchaService;
         }
@@ -19,18 +20,23 @@ namespace CaptchaGenerator.Controllers
         [HttpGet]
         public async Task<IActionResult> GetCaptcha()
         {
-            var value = await captchaService.GenerateCaptchaString();
-            var result = await captchaService.GenerateCaptcha(value);
+            string ip =  GetIpAddress();
+            var result = await captchaService.GenerateCaptcha(ip);
             return Ok(result);
         }
 
         [HttpPost]
-        public async Task<IActionResult> CheckCaptcha([FromQuery] Guid id,[FromQuery] string captchaText)
+        public async Task<IActionResult> CheckCaptcha(CaptchaCheckRequestDto request)
         {
-            var result = await captchaService.CheckCaptcha(id, captchaText);
+            string ip = GetIpAddress();
+            var result = await captchaService.CheckCaptcha(request, ip);
             return Ok(result);
         }
 
-
+        private string GetIpAddress()
+        {
+            if (Request.Headers.ContainsKey("X-Forwarded-For")) return Request.Headers["X-Forwarded-For"];
+            return HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString();
+        }
     }
 }

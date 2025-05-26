@@ -1,48 +1,51 @@
 ﻿namespace CaptchaGenerator.Services;
 
+using CaptchaGenerator.Constants;
+using CaptchaGenerator.Models.DTOs.Requests;
+using CaptchaGenerator.Models.DTOs.Responses;
+using CaptchaGenerator.Security.Hash;
+using CaptchaGenerator.Security.Token;
 using Model;
 using System.Drawing;
-using System.Drawing.Imaging;
-using System.Text;
 using System.Drawing.Drawing2D;
-public class CaptchaService
+using System.Drawing.Imaging;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+
+public sealed class CaptchaService : ICaptchaService
 {
     private readonly Random random;
-    private readonly Dictionary<Guid, Captcha> pairs;
-    public CaptchaService(Random random)
+    private readonly ITokenHelper tokenHelper;
+    private readonly IHashHelper hashHelper;
+    public CaptchaService(Random random, ITokenHelper tokenService, IHashHelper hashService)
     {
         this.random = random;
-        pairs = new();
+        this.tokenHelper = tokenService;
+        this.hashHelper = hashService;
     }
 
-    private const string chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
-    public async Task<string> GenerateCaptchaString(int length = 6)
+    public async Task<CaptchaCheckResponseDto> CheckCaptcha(CaptchaCheckRequestDto requestDto, string ip)
     {
-        StringBuilder captchaBuilder = new StringBuilder(length);
+       bool isTokenValid = await tokenHelper.IsTokenExpired(requestDto.Token);
+       if (isTokenValid) return new(CaptchaConstant.Messages.TokenIsNotValid, false);
 
-        for (int i = 0; i < length; i++)
-        {
-            captchaBuilder.Append(chars[random.Next(chars.Length)]);
-        }
+        var principal = await tokenHelper.GetPrincipal(requestDto.Token);
 
-        return captchaBuilder.ToString();
+        string tokenIp = principal.FindFirstValue(claimType:ClaimTypes.NameIdentifier);
+        if (tokenIp != ip) return new(CaptchaConstant.Messages.IpIsNotValid, false);
+        
+        
+        string hashedCaptcha = principal.FindFirstValue(claimType:ClaimTypes.Name);
+        if (!await hashHelper.ValidateHash(hashedCaptcha, requestDto.Answer))
+            return new(CaptchaConstant.Messages.CaptchaIsNotValid, false);
+
+        return new(CaptchaConstant.Messages.CaptchaIsValid,true);
     }
 
-    public async Task<CaptchaResponse> CheckCaptcha(Guid id,string captchaText)
+    public async Task<GenerateCaptchaResponse> GenerateCaptcha(string ip)
     {
-        if(pairs.ContainsKey(id) && pairs[id].CaptchaText == captchaText)
-        {
-            pairs.Remove(id);
-            return new("You are human", true);
-        }
-
-        pairs.Remove(id);
-        return new("You are failed", false);
-    }
-
-    public async Task<Captcha> GenerateCaptcha(string captchaText)
-    {
+        string captchaText = await GenerateCaptchaString();
         int width = 200;
         int height = 100;
 
@@ -95,20 +98,33 @@ public class CaptchaService
             graphics.DrawString(charValue.ToString(), font, brush,-5,-5);
         }
 
-      
-       
-
         using var memoryStream = new MemoryStream();
         Bitmap blurredImage = await GaussFilter(bitMap, await CalculateGaussFilter(gaussSigmaValue));
         blurredImage.Save(memoryStream, ImageFormat.Png);
+
+
         var base64 = Convert.ToBase64String(memoryStream.ToArray());
+        string hashedText = await hashHelper.HashText(captchaText);
+        var _token = await tokenHelper.CreateToken(hashedText, ip);
+        string token = new JwtSecurityTokenHandler().WriteToken(_token);
+        string mimeType = "image/png";
 
-        Captcha response = new Captcha(captchaText, base64, "image/png");
-        pairs.Add(response.Id, response);
 
+        GenerateCaptchaResponse response = new(token, base64, mimeType);
         return response;
     }
 
+    private async Task<string> GenerateCaptchaString(int length = 6)
+    {
+        StringBuilder captchaBuilder = new StringBuilder(length);
+
+        for (int i = 0; i < length; i++)
+        {
+            captchaBuilder.Append(CaptchaConstant.Texts.chars[random.Next(CaptchaConstant.Texts.chars.Length)]);
+        }
+
+        return captchaBuilder.ToString();
+    }
     private async Task<int[,]> CalculateGaussFilter(double sigma)
     {
         int number = Convert.ToInt32(Math.Round(sigma * 6));
@@ -131,7 +147,6 @@ public class CaptchaService
 
         return filter;
     }
-
     private async Task<Bitmap> GaussFilter(Bitmap image, int[,] filter)
     {
         int size = filter.GetLength(0);
