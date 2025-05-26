@@ -27,30 +27,32 @@ public sealed class CaptchaService : ICaptchaService
 
     public async Task<CaptchaCheckResponseDto> CheckCaptcha(CaptchaCheckRequestDto requestDto, string ip)
     {
-       bool isTokenValid = await tokenHelper.IsTokenExpired(requestDto.Token);
-       if (isTokenValid) return new(CaptchaConstant.Messages.TokenIsNotValid, false);
+        bool isTokenValid = await tokenHelper.IsTokenExpired(requestDto.Token);
+        if (isTokenValid) return new(CaptchaConstant.Messages.TokenIsNotValid, false);
 
         var principal = await tokenHelper.GetPrincipal(requestDto.Token);
 
-        string tokenIp = principal.FindFirstValue(claimType:ClaimTypes.NameIdentifier);
+        string tokenIp = principal.FindFirstValue(claimType: ClaimTypes.NameIdentifier);
         if (tokenIp != ip) return new(CaptchaConstant.Messages.IpIsNotValid, false);
-        
-        
-        string hashedCaptcha = principal.FindFirstValue(claimType:ClaimTypes.Name);
+
+
+        string hashedCaptcha = principal.FindFirstValue(claimType: ClaimTypes.Name);
         if (!await hashHelper.ValidateHash(hashedCaptcha, requestDto.Answer))
             return new(CaptchaConstant.Messages.CaptchaIsNotValid, false);
 
-        return new(CaptchaConstant.Messages.CaptchaIsValid,true);
+        return new(CaptchaConstant.Messages.CaptchaIsValid, true);
     }
 
     public async Task<GenerateCaptchaResponse> GenerateCaptcha(string ip)
     {
         string captchaText = await GenerateCaptchaString();
+
         int width = 200;
         int height = 100;
 
         using Bitmap bitMap = new Bitmap(width, height);
         using Graphics graphics = Graphics.FromImage(bitMap);
+
         graphics.SmoothingMode = SmoothingMode.HighQuality;
         graphics.Clear(Color.White);
 
@@ -60,32 +62,57 @@ public sealed class CaptchaService : ICaptchaService
 
         int verticalSpacing = 25;
         int horizontalSpacing = 10;
-        int slideAmount = random.Next(7,13);
+        int slideAmount = random.Next(7, 13);
         int textSpacing = 30;
-
         double gaussSigmaValue = 1.5;
 
+        await DrawVerticalLines(graphics, pen, verticalSpacing, slideAmount, height);
+        await DrawHorizontalLines(graphics, pen, horizontalSpacing, slideAmount, width);
+        await DrawCharacters(graphics, brush, font, slideAmount, textSpacing, captchaText, height);
+
+        using var memoryStream = new MemoryStream();
+        Bitmap blurredImage = await GaussFilter(bitMap, await CalculateGaussFilter(gaussSigmaValue));
+        blurredImage.Save(memoryStream, ImageFormat.Png);
+
+        var base64 = Convert.ToBase64String(memoryStream.ToArray());
+        string hashedText = await hashHelper.HashText(captchaText);
+        var _token = await tokenHelper.CreateToken(hashedText, ip);
+        string token = new JwtSecurityTokenHandler().WriteToken(_token);
+        string mimeType = "image/png";
+
+        GenerateCaptchaResponse response = new(token, base64, mimeType);
+        return response;
+    }
+
+    private async Task DrawVerticalLines(Graphics graphics,Pen pen,int verticalSpacing,int slideAmount,int height)
+    {
 
         for (int i = 0; i < 8; i++)
         {
             int currentWidth = i * verticalSpacing;
             Color lineColor = Color.FromArgb(255, random.Next(180, 255), random.Next(180, 255), random.Next(180, 255));
             pen.Color = lineColor;
-            Point start = new Point(currentWidth+ slideAmount, 0);
+            Point start = new Point(currentWidth + slideAmount, 0);
             Point end = new Point(currentWidth, height);
             graphics.DrawLine(pen, start, end);
         }
+    }
 
+    private async Task DrawHorizontalLines(Graphics graphics,Pen pen,int horizontalSpacing,int slideAmount,int width)
+    {
         for (int i = 0; i < 8; i++)
         {
             int currentHeight = i * horizontalSpacing;
             Color lineColor = Color.FromArgb(255, random.Next(180, 255), random.Next(180, 255), random.Next(180, 255));
             pen.Color = lineColor;
             Point start = new Point(0, currentHeight);
-            Point end = new Point(width, currentHeight+ slideAmount);
+            Point end = new Point(width, currentHeight + slideAmount);
             graphics.DrawLine(pen, start, end);
         }
+    }
 
+    private async Task DrawCharacters(Graphics graphics,SolidBrush brush,Font font,int slideAmount,int textSpacing,string captchaText,int height)
+    {
         for (int i = 0; i < captchaText.Length; i++)
         {
             char charValue = captchaText[i];
@@ -95,23 +122,8 @@ public sealed class CaptchaService : ICaptchaService
             graphics.TranslateTransform(slideAmount + (i * textSpacing), height / 2);
             graphics.RotateTransform((float)random.Next(-30, 30));
 
-            graphics.DrawString(charValue.ToString(), font, brush,-5,-5);
+            graphics.DrawString(charValue.ToString(), font, brush, -5, -5);
         }
-
-        using var memoryStream = new MemoryStream();
-        Bitmap blurredImage = await GaussFilter(bitMap, await CalculateGaussFilter(gaussSigmaValue));
-        blurredImage.Save(memoryStream, ImageFormat.Png);
-
-
-        var base64 = Convert.ToBase64String(memoryStream.ToArray());
-        string hashedText = await hashHelper.HashText(captchaText);
-        var _token = await tokenHelper.CreateToken(hashedText, ip);
-        string token = new JwtSecurityTokenHandler().WriteToken(_token);
-        string mimeType = "image/png";
-
-
-        GenerateCaptchaResponse response = new(token, base64, mimeType);
-        return response;
     }
 
     private async Task<string> GenerateCaptchaString(int length = 6)
@@ -128,20 +140,20 @@ public sealed class CaptchaService : ICaptchaService
     private async Task<int[,]> CalculateGaussFilter(double sigma)
     {
         int number = Convert.ToInt32(Math.Round(sigma * 6));
-        int matrisSize = number % 2 == 0 ? number - 1 : number;
-        int[,] filter = new int[matrisSize, matrisSize];
+        int matrixSize = number % 2 == 0 ? number - 1 : number;
+        int[,] filter = new int[matrixSize, matrixSize];
         double leftValue = 1 / (Math.Sqrt(2 * Math.PI) * sigma);
         double scale = 0;
-        for (int i = -matrisSize / 2; i < matrisSize / 2; i++)
+        for (int i = -matrixSize / 2; i < matrixSize / 2; i++)
         {
-            for (int j = -matrisSize / 2; j < matrisSize / 2; j++)
+            for (int j = -matrixSize / 2; j < matrixSize / 2; j++)
             {
                 double value = leftValue * Math.Exp(-((i * i + j + j) / (2 * sigma * sigma)));
-                if (i == -matrisSize / 2 && j == -matrisSize / 2)
+                if (i == -matrixSize / 2 && j == -matrixSize / 2)
                 {
                     scale = 1 / value;
                 }
-                filter[i + matrisSize / 2, j + matrisSize / 2] = Convert.ToInt32(Math.Round(scale * value));
+                filter[i + matrixSize / 2, j + matrixSize / 2] = Convert.ToInt32(Math.Round(scale * value));
             }
         }
 
@@ -183,9 +195,7 @@ public sealed class CaptchaService : ICaptchaService
             }
         }
 
-
         return newImage;
-
     }
 }
 
