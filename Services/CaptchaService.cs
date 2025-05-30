@@ -1,17 +1,20 @@
-﻿namespace CaptchaGenerator.Services;
-
-using CaptchaGenerator.Constants;
+﻿using CaptchaGenerator.Constants;
 using CaptchaGenerator.Models.DTOs.Requests;
 using CaptchaGenerator.Models.DTOs.Responses;
 using CaptchaGenerator.Security.Hash;
 using CaptchaGenerator.Security.Token;
-using Model;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Speech.Synthesis;
 using System.Text;
+
+namespace CaptchaGenerator.Services;
+
 
 public sealed class CaptchaService : ICaptchaService
 {
@@ -24,7 +27,6 @@ public sealed class CaptchaService : ICaptchaService
         this.tokenHelper = tokenService;
         this.hashHelper = hashService;
     }
-
     public async Task<CaptchaCheckResponseDto> CheckCaptcha(CaptchaCheckRequestDto requestDto, string ip)
     {
         bool isTokenValid = await tokenHelper.IsTokenExpired(requestDto.Token);
@@ -42,49 +44,118 @@ public sealed class CaptchaService : ICaptchaService
 
         return new(CaptchaConstant.Messages.CaptchaIsValid, true);
     }
-
     public async Task<GenerateCaptchaResponse> GenerateCaptcha(string ip)
     {
         string captchaText = await GenerateCaptchaString();
+        string base64 = await DrawImage(captchaText);
+        string mimeType = "image/png";
 
-        int width = 200;
-        int height = 100;
+        string hashedText = await hashHelper.HashText(captchaText);
+        JwtSecurityToken _token = await tokenHelper.CreateToken(hashedText, ip);
+        string token = new JwtSecurityTokenHandler().WriteToken(_token);
 
-        using Bitmap bitMap = new Bitmap(width, height);
+        return new(token, base64, mimeType);
+    }
+    public async Task<GenerateTextAndSoundCaptchaResponse> GenerateTextAndSoundCaptcha(string ip)
+    {
+        string captchaText = await GenerateCaptchaString();
+        string imageBase64 = await DrawImage(captchaText);
+        string soundBase64 = await GenerateSound(captchaText);
+        string soundType = "audio/wav";
+        string mimeType = "image/png";
+
+        string hashedText = await hashHelper.HashText(captchaText);
+        JwtSecurityToken _token = await tokenHelper.CreateToken(hashedText, ip);
+        string token = new JwtSecurityTokenHandler().WriteToken(_token);
+
+        return new(token, imageBase64, soundBase64, mimeType, soundType);
+    }
+    public async Task<GenerateSoundCaptchaResponse> GenerateSoundCaptcha(string ip)
+    {
+        string captchaText = (await GenerateCaptchaString()).ToUpper();
+        string soundBase64 = await GenerateSound(captchaText);
+        string soundType = "audio/wav";
+
+        string hashedText = await hashHelper.HashText(captchaText);
+        JwtSecurityToken _token = await tokenHelper.CreateToken(hashedText, ip);
+        string token = new JwtSecurityTokenHandler().WriteToken(_token);
+
+        return new(token, soundBase64, soundType);
+    }
+    private async Task<string> GenerateSound(string captchaText)
+    {
+        string withSpaceCaptchaText = string.Join(" ", captchaText.ToArray());
+        SpeechSynthesizer ttsSynth = new();
+        using MemoryStream captchaSound = new();
+
+        ttsSynth.SelectVoiceByHints(VoiceGender.Female, VoiceAge.Teen);
+        ttsSynth.Rate = -3;
+        ttsSynth.SetOutputToWaveStream(captchaSound);
+        ttsSynth.Speak(withSpaceCaptchaText);
+
+        var bytes = MixWithNoiseSound(captchaSound).ToArray();
+        string soundBase64 = Convert.ToBase64String(bytes);
+        return soundBase64;
+    }
+    private MemoryStream MixWithNoiseSound(MemoryStream captchaSound,
+        int sampleRate = 44100, int channel = 2, SignalGeneratorType noiseType = SignalGeneratorType.Pink,
+        double gain = 0.1, double frequency = 1000, int second = 3)
+    {
+        using MemoryStream outputSound = new();
+        MixingSampleProvider mixer = new(WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channel));
+        captchaSound.Position = 0;
+
+        ISampleProvider noiseSound = new SignalGenerator()
+        {
+            Gain = gain,
+            Type = noiseType,
+            Frequency = frequency,
+        }.Take(TimeSpan.FromSeconds(second)).ToStereo();
+
+        ISampleProvider captchaSoundProvider = new WaveFileReader(captchaSound)
+            .ToSampleProvider()
+            .ToStereo();
+        captchaSoundProvider = Resample(captchaSoundProvider, sampleRate);
+
+        mixer.AddMixerInput(captchaSoundProvider);
+        mixer.AddMixerInput(noiseSound);
+
+        WaveFileWriter.WriteWavFileToStream(outputSound, mixer.ToWaveProvider());
+
+        return outputSound;
+    }
+    private ISampleProvider Resample(ISampleProvider sourceProvider, int targetSampleRate)
+    {
+        WdlResamplingSampleProvider resampler = new(sourceProvider, targetSampleRate);
+        return resampler;
+    }
+    private async Task<string> DrawImage(string captchaText, int width = 200, int height = 100, string fontType = "Arial", float fontSize = 24, float penSize = 3,
+        int verticalSpacing = 25, int horizontalSpacing = 10, int textSpacing = 30, double gaussSigmaValue = 1.5)
+    {
+        using Bitmap bitMap = new(width, height);
         using Graphics graphics = Graphics.FromImage(bitMap);
 
         graphics.SmoothingMode = SmoothingMode.HighQuality;
         graphics.Clear(Color.White);
 
-        using Font font = new Font("Arial", 24);
-        using SolidBrush brush = new SolidBrush(Color.Black);
-        using var pen = new Pen(Color.Black, 3);
-
-        int verticalSpacing = 25;
-        int horizontalSpacing = 10;
+        using Font font = new(fontType, fontSize);
+        using SolidBrush brush = new(Color.Black);
+        using Pen pen = new(Color.Black, penSize);
         int slideAmount = random.Next(7, 13);
-        int textSpacing = 30;
-        double gaussSigmaValue = 1.5;
 
         await DrawVerticalLines(graphics, pen, verticalSpacing, slideAmount, height);
         await DrawHorizontalLines(graphics, pen, horizontalSpacing, slideAmount, width);
         await DrawCharacters(graphics, brush, font, slideAmount, textSpacing, captchaText, height);
 
-        using var memoryStream = new MemoryStream();
+        using MemoryStream memoryStream = new();
         Bitmap blurredImage = await GaussFilter(bitMap, await CalculateGaussFilter(gaussSigmaValue));
         blurredImage.Save(memoryStream, ImageFormat.Png);
 
         var base64 = Convert.ToBase64String(memoryStream.ToArray());
-        string hashedText = await hashHelper.HashText(captchaText);
-        var _token = await tokenHelper.CreateToken(hashedText, ip);
-        string token = new JwtSecurityTokenHandler().WriteToken(_token);
-        string mimeType = "image/png";
 
-        GenerateCaptchaResponse response = new(token, base64, mimeType);
-        return response;
+        return base64;
     }
-
-    private async Task DrawVerticalLines(Graphics graphics,Pen pen,int verticalSpacing,int slideAmount,int height)
+    private async Task DrawVerticalLines(Graphics graphics, Pen pen, int verticalSpacing, int slideAmount, int height)
     {
 
         for (int i = 0; i < 8; i++)
@@ -97,8 +168,7 @@ public sealed class CaptchaService : ICaptchaService
             graphics.DrawLine(pen, start, end);
         }
     }
-
-    private async Task DrawHorizontalLines(Graphics graphics,Pen pen,int horizontalSpacing,int slideAmount,int width)
+    private async Task DrawHorizontalLines(Graphics graphics, Pen pen, int horizontalSpacing, int slideAmount, int width)
     {
         for (int i = 0; i < 8; i++)
         {
@@ -110,8 +180,7 @@ public sealed class CaptchaService : ICaptchaService
             graphics.DrawLine(pen, start, end);
         }
     }
-
-    private async Task DrawCharacters(Graphics graphics,SolidBrush brush,Font font,int slideAmount,int textSpacing,string captchaText,int height)
+    private async Task DrawCharacters(Graphics graphics, SolidBrush brush, Font font, int slideAmount, int textSpacing, string captchaText, int height)
     {
         for (int i = 0; i < captchaText.Length; i++)
         {
@@ -125,7 +194,6 @@ public sealed class CaptchaService : ICaptchaService
             graphics.DrawString(charValue.ToString(), font, brush, -5, -5);
         }
     }
-
     private async Task<string> GenerateCaptchaString(int length = 6)
     {
         StringBuilder captchaBuilder = new StringBuilder(length);
@@ -197,5 +265,7 @@ public sealed class CaptchaService : ICaptchaService
 
         return newImage;
     }
+
+
 }
 
