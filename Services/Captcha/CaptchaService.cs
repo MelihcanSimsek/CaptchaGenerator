@@ -1,6 +1,6 @@
 ﻿using CaptchaGenerator.Constants;
-using CaptchaGenerator.Models.DTOs.Requests;
-using CaptchaGenerator.Models.DTOs.Responses;
+using CaptchaGenerator.Models.DTOs.Requests.Captcha;
+using CaptchaGenerator.Models.DTOs.Responses.Captcha;
 using CaptchaGenerator.Security.Hash;
 using CaptchaGenerator.Security.Token;
 using NAudio.Wave;
@@ -13,7 +13,7 @@ using System.Security.Claims;
 using System.Speech.Synthesis;
 using System.Text;
 
-namespace CaptchaGenerator.Services;
+namespace CaptchaGenerator.Services.Captcha;
 
 
 public sealed class CaptchaService : ICaptchaService
@@ -24,15 +24,15 @@ public sealed class CaptchaService : ICaptchaService
     public CaptchaService(Random random, ITokenHelper tokenService, IHashHelper hashService)
     {
         this.random = random;
-        this.tokenHelper = tokenService;
-        this.hashHelper = hashService;
+        tokenHelper = tokenService;
+        hashHelper = hashService;
     }
     public async Task<CaptchaCheckResponseDto> CheckCaptcha(CaptchaCheckRequestDto requestDto, string ip)
     {
-        bool isTokenValid = await tokenHelper.IsTokenExpired(requestDto.Token);
+        bool isTokenValid = await tokenHelper.IsCapthcaTokenExpired(requestDto.Token);
         if (isTokenValid) return new(CaptchaConstant.Messages.TokenIsNotValid, false);
 
-        var principal = await tokenHelper.GetPrincipal(requestDto.Token);
+        var principal = await tokenHelper.GetCaptchaTokenPrincipal(requestDto.Token);
 
         string tokenIp = principal.FindFirstValue(claimType: ClaimTypes.NameIdentifier);
         if (tokenIp != ip) return new(CaptchaConstant.Messages.IpIsNotValid, false);
@@ -51,7 +51,7 @@ public sealed class CaptchaService : ICaptchaService
         string mimeType = "image/png";
 
         string hashedText = await hashHelper.HashText(captchaText);
-        JwtSecurityToken _token = await tokenHelper.CreateToken(hashedText, ip);
+        JwtSecurityToken _token = await tokenHelper.CreateCaptchaToken(hashedText, ip);
         string token = new JwtSecurityTokenHandler().WriteToken(_token);
 
         return new(token, base64, mimeType);
@@ -65,7 +65,7 @@ public sealed class CaptchaService : ICaptchaService
         string mimeType = "image/png";
 
         string hashedText = await hashHelper.HashText(captchaText);
-        JwtSecurityToken _token = await tokenHelper.CreateToken(hashedText, ip);
+        JwtSecurityToken _token = await tokenHelper.CreateCaptchaToken(hashedText, ip);
         string token = new JwtSecurityTokenHandler().WriteToken(_token);
 
         return new(token, imageBase64, soundBase64, mimeType, soundType);
@@ -77,7 +77,7 @@ public sealed class CaptchaService : ICaptchaService
         string soundType = "audio/wav";
 
         string hashedText = await hashHelper.HashText(captchaText);
-        JwtSecurityToken _token = await tokenHelper.CreateToken(hashedText, ip);
+        JwtSecurityToken _token = await tokenHelper.CreateCaptchaToken(hashedText, ip);
         string token = new JwtSecurityTokenHandler().WriteToken(_token);
 
         return new(token, soundBase64, soundType);
@@ -188,8 +188,8 @@ public sealed class CaptchaService : ICaptchaService
             brush.Color = Color.FromArgb(255, random.Next(0, 199), random.Next(0, 199), random.Next(0, 199));
 
             graphics.ResetTransform();
-            graphics.TranslateTransform(slideAmount + (i * textSpacing), height / 2);
-            graphics.RotateTransform((float)random.Next(-30, 30));
+            graphics.TranslateTransform(slideAmount + i * textSpacing, height / 2);
+            graphics.RotateTransform(random.Next(-30, 30));
 
             graphics.DrawString(charValue.ToString(), font, brush, -5, -5);
         }

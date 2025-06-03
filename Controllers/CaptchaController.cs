@@ -1,5 +1,5 @@
-﻿using CaptchaGenerator.Models.DTOs.Requests;
-using CaptchaGenerator.Services;
+﻿using CaptchaGenerator.Models.DTOs.Requests.Captcha;
+using CaptchaGenerator.Services.Captcha;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 

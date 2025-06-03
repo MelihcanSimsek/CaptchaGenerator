@@ -1,7 +1,7 @@
-﻿using CaptchaGenerator.Models.DTOs.Requests;
-using CaptchaGenerator.Models.DTOs.Responses;
+﻿using CaptchaGenerator.Models.DTOs.Requests.Captcha;
+using CaptchaGenerator.Models.DTOs.Responses.Captcha;
 
-namespace CaptchaGenerator.Services;
+namespace CaptchaGenerator.Services.Captcha;
 
 public interface ICaptchaService
 {

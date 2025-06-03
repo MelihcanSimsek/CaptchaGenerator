@@ -1,4 +1,6 @@
 ﻿using CaptchaGenerator.Model.Security;
+using CaptchaGenerator.Models.Entites;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -10,35 +12,62 @@ namespace CaptchaGenerator.Security.Token;
 
 public sealed class TokenHelper : ITokenHelper
 {
-    private readonly TokenOptions tokenOptions;
-    public TokenHelper(IOptions<TokenOptions> options)
+    private readonly Model.Security.TokenOptions tokenOptions;
+    private readonly UserManager<User> userManager;
+    public TokenHelper(IOptions<Model.Security.TokenOptions> options, UserManager<User> userManager)
     {
         tokenOptions = options.Value;
+        this.userManager = userManager;
     }
-    public async Task<JwtSecurityToken> CreateToken(string hashedCaptchaText,string ip)
+    public async Task<JwtSecurityToken> CreateCaptchaToken(string hashedCaptchaText, string ip)
     {
-        IList<Claim> claims =  await GetClaims(hashedCaptchaText, ip);
+        IList<Claim> claims = await GetCaptchaClaims(hashedCaptchaText, ip);
 
-        SymmetricSecurityKey key = new(Encoding.UTF8.GetBytes(tokenOptions.Secret));
+        SymmetricSecurityKey key = new(Encoding.UTF8.GetBytes(tokenOptions.CaptchaSecret));
 
         var token = new JwtSecurityToken(
             audience: tokenOptions.Audience,
             issuer: tokenOptions.Issuer,
-            expires: DateTime.Now.AddMinutes(tokenOptions.TokenExpiredTime),
+            expires: DateTime.Now.AddMinutes(tokenOptions.CaptchaTokenExpiredTime),
             claims: claims,
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 
         return token;
     }
 
-    public async Task<bool> IsTokenExpired(string token)
+    public async Task<JwtSecurityToken> CreateAccessToken(User user, IList<string> roles)
+    {
+        IList<Claim> claims = await GetUserClaims(user, roles);
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(tokenOptions.AccessSecret));
+        var token = new JwtSecurityToken(
+            issuer: tokenOptions.Issuer,
+            audience: tokenOptions.Audience,
+            expires: DateTime.Now.AddMinutes(tokenOptions.AccessTokenValidityInMinutes),
+            claims: claims,
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha512)
+            );
+
+        await userManager.AddClaimsAsync(user, claims);
+        return token;
+    }
+
+    public async Task<string> GenerateRefreshToken()
+    {
+        var randomNumber = new Byte[64];
+        using var randomNumberGenerator = RandomNumberGenerator.Create();
+        randomNumberGenerator.GetBytes(randomNumber);
+        return Convert.ToBase64String(randomNumber);
+    }
+
+    public async Task<bool> IsCapthcaTokenExpired(string token)
     {
         TokenValidationParameters parameters = new()
         {
             ValidateIssuer = false,
             ValidateAudience = false,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(tokenOptions.Secret)),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(tokenOptions.CaptchaSecret)),
             ValidateLifetime = true,
         };
 
@@ -53,21 +82,19 @@ public sealed class TokenHelper : ITokenHelper
         }
         catch (Exception)
         {
-
             return true;
         }
 
         return false;
     }
-
-    public async Task<ClaimsPrincipal> GetPrincipal(string token)
+    public async Task<ClaimsPrincipal> GetCaptchaTokenPrincipal(string token)
     {
         TokenValidationParameters parameters = new()
         {
             ValidateIssuer = false,
             ValidateAudience = false,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(tokenOptions.Secret)),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(tokenOptions.CaptchaSecret)),
             ValidateLifetime = false,
         };
 
@@ -77,7 +104,38 @@ public sealed class TokenHelper : ITokenHelper
         return principal;
     }
 
-    private async Task<IList<Claim>> GetClaims(string hashedCaptchaText,string ip)
+    public async Task<ClaimsPrincipal> GetAccessTokenPrincipal(string token)
+    {
+        TokenValidationParameters parameters = new()
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(tokenOptions.AccessSecret)),
+            ValidateLifetime = false,
+        };
+
+        JwtSecurityTokenHandler handler = new();
+        var principal = handler.ValidateToken(token, parameters, out SecurityToken securityToken);
+
+        return principal;
+    }
+
+    private async Task<IList<Claim>> GetUserClaims(User user, IList<string> roles)
+    {
+        List<Claim> claims = new();
+
+        claims.Add(new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()));
+        claims.Add(new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()));
+        claims.Add(new Claim(ClaimTypes.Email, user.Email.ToString()));
+
+        foreach (var role in roles)
+            claims.Add(new Claim(ClaimTypes.Role, role));
+
+        return claims;
+    }
+
+    private async Task<IList<Claim>> GetCaptchaClaims(string hashedCaptchaText, string ip)
     {
         List<Claim> claims = new();
         claims.Add(new Claim(ClaimTypes.Name, hashedCaptchaText));
@@ -85,5 +143,5 @@ public sealed class TokenHelper : ITokenHelper
         return claims;
     }
 
-  
+
 }

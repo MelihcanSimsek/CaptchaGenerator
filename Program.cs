@@ -1,7 +1,5 @@
-using CaptchaGenerator.Model.Security;
-using CaptchaGenerator.Models.Security;
-using CaptchaGenerator.Security.Hash;
-using CaptchaGenerator.Security.Token;
+using CaptchaGenerator.Infrastructure;
+using CaptchaGenerator.Security;
 using CaptchaGenerator.Services;
 using Scalar.AspNetCore;
 
@@ -12,13 +10,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-builder.Services.AddScoped<Random>();
-builder.Services.AddScoped<ICaptchaService, CaptchaService>();
-builder.Services.AddScoped<ITokenHelper, TokenHelper>();
-builder.Services.AddScoped<IHashHelper, HashHelper>();
 
-builder.Services.Configure<TokenOptions>(builder.Configuration.GetSection("TokenOptions"));
-builder.Services.Configure<HashOptions>(builder.Configuration.GetSection("HashOptions"));
+builder.Services.AddInfrastructureRegistration(builder.Configuration);
+builder.Services.AddHelperRegistration(builder.Configuration);
+builder.Services.AddServiceRegistration();
 
 builder.Services.AddCors(options =>
 {
@@ -31,7 +26,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -43,9 +37,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
-
+app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
 app.Run();
