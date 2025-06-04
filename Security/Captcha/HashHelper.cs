@@ -24,12 +24,9 @@ public sealed class HashHelper : IHashHelper
     public async Task<bool> ValidateHash(string computedText, string input)
     {
         string computedInput = await HashText(input);
-        for (int i = 0; i < computedText.Length; i++)
-        {
-            if (computedText[i] != computedInput[i])
-                return false;
-        }
-
-        return true;
+      
+        return computedInput == computedText;
     }
+
+   
 }

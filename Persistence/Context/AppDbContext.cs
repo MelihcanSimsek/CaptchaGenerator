@@ -1,10 +1,10 @@
 ﻿using CaptchaGenerator.Models.Entites;
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using System.Reflection;
 
 namespace CaptchaGenerator.Infrastructure.Context;
 
-public class AppDbContext : IdentityDbContext<User,Role,Guid>
+public sealed class AppDbContext : DbContext
 {
     public AppDbContext()
     {
@@ -15,9 +15,14 @@ public class AppDbContext : IdentityDbContext<User,Role,Guid>
     {
         
     }
+    public DbSet<User> Users { get; set; }
+    public DbSet<Role> Roles { get; set; }
+    public DbSet<UserRole> UserRoles { get; set; }
+
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 }

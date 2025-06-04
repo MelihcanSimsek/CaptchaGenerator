@@ -1,6 +1,4 @@
-﻿using CaptchaGenerator.Model.Security;
-using CaptchaGenerator.Models.Entites;
-using Microsoft.AspNetCore.Identity;
+﻿using CaptchaGenerator.Models.Entites;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -13,11 +11,9 @@ namespace CaptchaGenerator.Security.Token;
 public sealed class TokenHelper : ITokenHelper
 {
     private readonly Model.Security.TokenOptions tokenOptions;
-    private readonly UserManager<User> userManager;
-    public TokenHelper(IOptions<Model.Security.TokenOptions> options, UserManager<User> userManager)
+    public TokenHelper(IOptions<Model.Security.TokenOptions> options)
     {
         tokenOptions = options.Value;
-        this.userManager = userManager;
     }
     public async Task<JwtSecurityToken> CreateCaptchaToken(string hashedCaptchaText, string ip)
     {
@@ -48,7 +44,6 @@ public sealed class TokenHelper : ITokenHelper
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha512)
             );
 
-        await userManager.AddClaimsAsync(user, claims);
         return token;
     }
 

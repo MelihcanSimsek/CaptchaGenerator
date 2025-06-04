@@ -3,9 +3,11 @@ using CaptchaGenerator.Constants;
 using CaptchaGenerator.Models.DTOs.Requests.Auth;
 using CaptchaGenerator.Models.DTOs.Responses.Auth;
 using CaptchaGenerator.Models.Entites;
+using CaptchaGenerator.Persistence.UnitOfWorks;
+using CaptchaGenerator.Security.Password;
 using CaptchaGenerator.Security.Token;
 using CaptchaGenerator.Services.Captcha;
-using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text.RegularExpressions;
 
@@ -15,34 +17,37 @@ public class AuthService : IAuthService
 {
     private readonly ITokenHelper tokenHelper;
     private readonly ICaptchaService captchaService;
-    private readonly UserManager<User> userManager;
-    private readonly RoleManager<Role> roleManager;
     private readonly IConfiguration configuration;
-
-    public AuthService(ICaptchaService captchaService, ITokenHelper tokenHelper, UserManager<User> userManager, RoleManager<Role> roleManager, IConfiguration configuration)
+    private readonly IUnitOfWork unitOfWork;
+    public AuthService(ICaptchaService captchaService, ITokenHelper tokenHelper, IConfiguration configuration, IUnitOfWork unitOfWork)
     {
         this.captchaService = captchaService;
         this.tokenHelper = tokenHelper;
-        this.userManager = userManager;
-        this.roleManager = roleManager;
         this.configuration = configuration;
+        this.unitOfWork = unitOfWork;
     }
 
-    public async Task<LoginResponse> Login(LoginRequestDto loginDto,string ip)
+    public async Task<LoginResponse> Login(LoginRequestDto loginDto, string ip)
     {
+        //validate captcha
         var captchaResponse = await captchaService.CheckCaptcha(new(loginDto.Answer, loginDto.Token), ip);
-        if (!captchaResponse.IsSuccess) 
+        if (!captchaResponse.IsSuccess)
             return new(captchaResponse.IsSuccess, captchaResponse.Message, string.Empty, string.Empty, null);
 
-        if(!await IsEmailCorrect(loginDto.Email))
+        //validate email
+        if (!await IsEmailCorrect(loginDto.Email))
             return new(false, AuthConstant.Messages.EmailIsNotValid, string.Empty, string.Empty, null);
 
-        User? user = await userManager.FindByEmailAsync(loginDto.Email);
-        bool isPasswordCorrect = await userManager.CheckPasswordAsync(user, loginDto.Password);
+        //validate password
+        User? user = await unitOfWork.GetReadRepository<User>().GetAsync(p => p.Email == loginDto.Email);
+        bool isPasswordCorrect = PasswordHelper.VerifyPassword(loginDto.Password, user.PasswordHash, user.PasswordSalt);
         if (user is null || !isPasswordCorrect)
             return new(false, AuthConstant.Messages.EmailOrPasswordIsNotCorrect, string.Empty, string.Empty, null);
 
-        IList<string> roles = await userManager.GetRolesAsync(user);
+        //create token
+        IList<string> roles = await unitOfWork.GetReadRepository<UserRole>()
+            .Find(p => p.UserId == user.Id)
+            .Include(m => m.Role).Select(c => c.Role.Name).ToListAsync();
 
         JwtSecurityToken _token = await tokenHelper.CreateAccessToken(user, roles);
         string refreshToken = await tokenHelper.GenerateRefreshToken();
@@ -52,57 +57,66 @@ public class AuthService : IAuthService
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiryDate = DateTime.Now.AddDays(refreshTokenValidityInDays);
 
-        await userManager.UpdateAsync(user);
-        await userManager.UpdateSecurityStampAsync(user);
+        await unitOfWork.GetWriteRepository<User>().UpdateAsync(user);
+        await unitOfWork.SaveAsync();
 
         string token = new JwtSecurityTokenHandler().WriteToken(_token);
-        string tokenName = "AccessToken";
-        string loginProvider = "Default";
-
-        await userManager.SetAuthenticationTokenAsync(user, loginProvider, tokenName, token);
-
-        return new(true,AuthConstant.Messages.LoginSuccessfully, token, refreshToken, _token.ValidTo);
+        return new(true, AuthConstant.Messages.LoginSuccessfully, token, refreshToken, _token.ValidTo);
     }
 
-    public async Task<RegisterResponse> Register(RegisterRequestDto registerDto,string ip)
+    public async Task<RegisterResponse> Register(RegisterRequestDto registerDto, string ip)
     {
+        //validate captcha
         var captchaResponse = await captchaService.CheckCaptcha(new(registerDto.Answer, registerDto.Token), ip);
         if (!captchaResponse.IsSuccess) return new(captchaResponse.IsSuccess, captchaResponse.Message);
 
+        //validate email
         if (!await IsEmailCorrect(registerDto.Email))
             return new(false, AuthConstant.Messages.EmailIsNotValid);
 
+        //validate password 
         if (!await IsPasswordValid(registerDto.Password))
             return new(false, AuthConstant.Messages.PasswordIsNotValid);
 
+        //validate passwords match 
         if (!await ArePasswordsMatch(registerDto.Password, registerDto.ConfirmPassword))
             return new(false, AuthConstant.Messages.PasswordsAreNotMatch);
 
-        User? userForChecking = await userManager.FindByEmailAsync(registerDto.Email);
+        //validate user not exists
+        User? userForChecking = await unitOfWork.GetReadRepository<User>().GetAsync(p => p.Email == registerDto.Email);
         if (!await IsUserAlreadyExists(userForChecking))
             return new(false, AuthConstant.Messages.UserAlreadyExists);
+
+        //create user
+        PasswordHelper.CreatePassword(registerDto.Password, out byte[] passwordHash, out byte[] passwordSalt);
 
         string userRoleTag = "user";
         User newUser = new()
         {
-            UserName = registerDto.Email,
             Email = registerDto.Email,
             FullName = registerDto.FullName,
-            SecurityStamp = Guid.NewGuid().ToString()
+            PasswordHash = passwordHash,
+            PasswordSalt = passwordSalt
         };
 
-        IdentityResult result = await userManager.CreateAsync(newUser, registerDto.Password);
+        await unitOfWork.GetWriteRepository<User>().AddAsync(newUser);
+        await unitOfWork.SaveAsync();
 
-        if (result.Succeeded)
-            if (!await roleManager.RoleExistsAsync(userRoleTag))
-                await roleManager.CreateAsync(new Role()
-                {
-                    ConcurrencyStamp = Guid.NewGuid().ToString(),
-                    Id = Guid.NewGuid(),
-                    Name = userRoleTag,
-                    NormalizedName = userRoleTag.ToUpper()
-                });
-        await userManager.AddToRoleAsync(newUser, userRoleTag);
+        Role? role = await unitOfWork.GetReadRepository<Role>().GetAsync(p => p.Name == userRoleTag);
+        
+        if(role is null)
+        {
+            role = new Role()
+            {
+                NormalizedName = userRoleTag.ToUpper(),
+                Name = userRoleTag
+            };
+
+            await unitOfWork.GetWriteRepository<Role>().AddAsync(role);
+        }
+
+        await unitOfWork.GetWriteRepository<UserRole>().AddAsync(new() { UserId = newUser.Id, RoleId = role.Id });
+        await unitOfWork.SaveAsync();
 
         return new(true, AuthConstant.Messages.UserRegisteredSuccessfully);
     }

@@ -1,6 +1,6 @@
 ﻿namespace CaptchaGenerator.Constants;
 
-public class AuthConstant
+public sealed class AuthConstant
 {
     public struct Messages
     {

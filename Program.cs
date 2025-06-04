@@ -11,7 +11,7 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-builder.Services.AddInfrastructureRegistration(builder.Configuration);
+builder.Services.AddPersistenceRegistration(builder.Configuration);
 builder.Services.AddHelperRegistration(builder.Configuration);
 builder.Services.AddServiceRegistration();
 
