@@ -1,5 +1,7 @@
 ﻿using CaptchaGenerator.Models.Entites;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -11,9 +13,11 @@ namespace CaptchaGenerator.Security.Token;
 public sealed class TokenHelper : ITokenHelper
 {
     private readonly Model.Security.TokenOptions tokenOptions;
-    public TokenHelper(IOptions<Model.Security.TokenOptions> options)
+    private readonly IConfiguration configuration;
+    public TokenHelper(IOptions<Model.Security.TokenOptions> options, IConfiguration configuration)
     {
         tokenOptions = options.Value;
+        this.configuration = configuration;
     }
     public async Task<JwtSecurityToken> CreateCaptchaToken(string hashedCaptchaText, string ip)
     {
@@ -82,6 +86,8 @@ public sealed class TokenHelper : ITokenHelper
 
         return false;
     }
+
+    //Get captcha token principal
     public async Task<ClaimsPrincipal> GetCaptchaTokenPrincipal(string token)
     {
         TokenValidationParameters parameters = new()
@@ -99,6 +105,7 @@ public sealed class TokenHelper : ITokenHelper
         return principal;
     }
 
+    //Get our token principal
     public async Task<ClaimsPrincipal> GetAccessTokenPrincipal(string token)
     {
         TokenValidationParameters parameters = new()
@@ -113,6 +120,35 @@ public sealed class TokenHelper : ITokenHelper
         JwtSecurityTokenHandler handler = new();
         var principal = handler.ValidateToken(token, parameters, out SecurityToken securityToken);
 
+        return principal;
+    }
+
+    //Get google token principal
+    public async Task<ClaimsPrincipal> GetIdTokenPrincipal(string googleIdToken)
+    {
+        var googleIssuer = "https://accounts.google.com";
+        var metadataAddress = "https://accounts.google.com/.well-known/openid-configuration";
+
+        var configManager = new ConfigurationManager<OpenIdConnectConfiguration>(
+            metadataAddress,
+            new OpenIdConnectConfigurationRetriever());
+
+        var config = await configManager.GetConfigurationAsync();
+
+        TokenValidationParameters validationParameters = new TokenValidationParameters
+        {
+            ValidIssuer = googleIssuer,
+            ValidAudience = configuration["GoogleAuthentication:ClientId"],
+            IssuerSigningKeys = config.SigningKeys,
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateIssuerSigningKey = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(5)
+        };
+
+        var handler = new JwtSecurityTokenHandler();
+        var principal = handler.ValidateToken(googleIdToken, validationParameters, out _);
         return principal;
     }
 
@@ -138,5 +174,5 @@ public sealed class TokenHelper : ITokenHelper
         return claims;
     }
 
-
+  
 }

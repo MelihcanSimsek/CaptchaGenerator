@@ -12,6 +12,7 @@ public interface ITokenHelper
     Task<bool> IsCapthcaTokenExpired(string captchaToken);
     Task<ClaimsPrincipal> GetCaptchaTokenPrincipal(string captchaToken);
     Task<ClaimsPrincipal> GetAccessTokenPrincipal(string accessToken);
+    Task<ClaimsPrincipal> GetIdTokenPrincipal(string googleIdToken);
 
 
 

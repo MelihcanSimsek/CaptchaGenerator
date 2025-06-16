@@ -1,4 +1,5 @@
 ﻿using CaptchaGenerator.Models.DTOs.Requests.Auth;
+using CaptchaGenerator.Models.DTOs.Responses.Auth;
 using CaptchaGenerator.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -6,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace CaptchaGenerator.Controllers;
 
-[Route("api/[controller]/[action]")]
+[Route("api/[controller]/")]
 [ApiController]
 public class AuthsController : ControllerBase
 {
@@ -17,7 +18,7 @@ public class AuthsController : ControllerBase
         this.authService = authService;
     }
 
-    [HttpPost]
+    [HttpPost("Register")]
     public async Task<IActionResult> Register(RegisterRequestDto registerRequest)
     {
         string ip = GetIpAddress();
@@ -26,7 +27,7 @@ public class AuthsController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPost]
+    [HttpPost("Login")]
     public async Task<IActionResult> Login(LoginRequestDto loginRequest)
     {
         string ip = GetIpAddress();
@@ -34,14 +35,33 @@ public class AuthsController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet]
+    [HttpGet("LoginWithGoogle")]
+    public async Task<IActionResult> LoginWithGoogle()
+    {
+        GoogleAuthenticationResponse result = await authService.GetGoogleAuthentication();
+        return Ok(result);
+    }
+
+    [HttpGet("Callback")]
+    public async Task<IActionResult> Callback([FromQuery] GoogleCallbackRequest request)
+    {
+        TokenExchangeResponse tokenExchangeResponse = await authService.ExchangeGoogleTokensWithCode(request);
+        if (!tokenExchangeResponse.IsSuccess)
+            return BadRequest();
+
+        LoginResponse loginResponse = await authService.LoginWithGoogle(tokenExchangeResponse.GoogleTokens);
+        return Ok(loginResponse);
+    }
+
+    [HttpGet("TestAuth")]
     [Authorize(Roles = "admin")]
     public async Task<IActionResult> TestAuth()
     {
         return Ok();
     }
 
-    [HttpGet]
+
+    [HttpGet("TestPermissionAuth")]
     [Authorize(Roles = "moderator,user")]
     public async Task<IActionResult> TestPermissionAuth()
     {
