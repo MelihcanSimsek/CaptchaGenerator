@@ -84,7 +84,6 @@ public class AuthService : IAuthService
         if(!await IsUserAlreadyExists(user))
         {
             string userName = tokenPrincipal.FindFirstValue(claimType: ClaimTypes.GivenName);
-            Console.WriteLine(userName);
             string userRoleTag = "user";
 
             user = new()
